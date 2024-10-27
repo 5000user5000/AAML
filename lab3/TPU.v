@@ -582,7 +582,7 @@ module controller(
             IDLE: 
                 n_state = (in_valid || busy) ? READ : IDLE;
             READ: 
-                n_state = (counter < (K_tmp + 6)) ? READ : OUTPUT; // systolic array 讀取加計算需要 K+6 個 cycle，而 state 更新需要 1 個 cycle，所以用 < K+6
+                n_state = (counter <= (K_tmp + 6)) ? READ : OUTPUT; 
             OUTPUT: 
                 n_state = (counter_out < out_cycle) ? OUTPUT : (counter_b == b_offset) ? FINISH : IDLE;
             FINISH: 
@@ -602,23 +602,13 @@ module controller(
     /* 
     ***********************************************************
     *   Control Signals                                       *
-    *  - busy                                                 *
     *  - wr_en                                                *
     *  - out_cycle                                            *
     *  - counter , counter_a , counter_b , counter_out        *
     ***********************************************************
     */
 
-    // busy signal
-    // always @(posedge clk or negedge rst_n) begin
-    //     if(!rst_n)begin
-    //         busy <= 0;
-    //     end
-    //     if(in_valid)
-    //         busy <= 1;
-    //     else if(n_state == FINISH)
-    //         busy <= 0;
-    // end
+
 
     // wr_en
     assign A_wr_en = 0;

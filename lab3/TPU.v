@@ -81,7 +81,7 @@ end
 
 
 
-always @(negedge clk) begin
+always @(posedge clk) begin
     if(K > 0) begin
         K_tmp <= K;
         M_tmp <= M;
@@ -185,7 +185,7 @@ module data_loader(
 
     assign out_wire = out;
 
-    always @(negedge clk or negedge rst_n) begin
+    always @(posedge clk or negedge rst_n) begin
         if(!rst_n) begin
             temp_out1 <= 0;
             temp_out2 <= 0;
@@ -198,9 +198,10 @@ module data_loader(
             temp_out3 <= 0;
             temp_out4 <= 0;
             out <= 0;
-        end else if(state == READ) begin  
-            out <= {temp_out1[7:0], temp_out2[15:8], temp_out3[23:16], temp_out4[31:24]}; // 各自取開頭 8 bits，並組合
-            end
+        end 
+        // else if(state == READ) begin  
+        //     out <= {temp_out1[7:0], temp_out2[15:8], temp_out3[23:16], temp_out4[31:24]}; // 各自取開頭 8 bits，並組合
+        //     end
         end
     
     always @(posedge clk) begin
@@ -210,12 +211,14 @@ module data_loader(
                 temp_out2 <= {temp_out2[7:0] , in_data[23:16]}; // 向前 shift 8 bits，並將新資料放入
                 temp_out3 <= {temp_out3[15:0] , in_data[15:8]};
                 temp_out4 <= {temp_out4[23:0] , in_data[7:0]};
+                out <= {in_data[31:24], temp_out2[7:0], temp_out3[15:8], temp_out4[23:16]}; // 各自取開頭 8 bits，並組合
             end
             else begin
                 temp_out1 <= temp_out1 << 8;
                 temp_out2 <= temp_out2 << 8;
                 temp_out3 <= temp_out3 << 8;
                 temp_out4 <= temp_out4 << 8;
+                out <= {8'b0, temp_out2[7:0], temp_out3[15:8], temp_out4[23:16]}; 
             end
         end
     end
@@ -700,7 +703,7 @@ module controller(
             idx_a <= 15'd0;
         end
         else if(state == READ) begin
-            if(counter < K_tmp ) // not K-1
+            if(counter < K_tmp - 1) // 如果單純用 < k 的話，第一波運算會多讀下一波的第一筆資料，造成錯誤
             idx_a <= idx_a + 15'd1;
         end
         else begin

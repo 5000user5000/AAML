@@ -1,0 +1,4 @@
+iverilog -o cfu cfu.v 
+iverilog -o cfu_tb cfu_tb.v 
+vvp cfu_tb
+gtkwave cfu_tb.vcd

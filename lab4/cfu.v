@@ -49,7 +49,8 @@ module Cfu (
     );
 
     assign cmd_ready = ~rsp_valid;
-    assign rsp_payload_outputs_0 = reciprocal_result << 4;
+    // assign rsp_payload_outputs_0 = reciprocal_result << 4;
+    assign rsp_payload_outputs_0 = input_x;
 
     // Handshake logic
     always @(posedge clk) begin

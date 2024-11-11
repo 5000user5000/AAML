@@ -868,15 +868,15 @@ template <typename tRawType, int tIntegerBits>
 FixedPoint<tRawType, 0> logistic_on_positive_values(
     FixedPoint<tRawType, tIntegerBits> a) {
   typedef FixedPoint<tRawType, 0> ResultF;
-  cfu_op0(0,0,0);
+  
   // FixedPoint<tRawType, tIntegerBits>  b = -a;
   // uint32_t in1 = (uint32_t)b.raw();
   uint32_t out =  cfu_op0(1,a,0); // 1 / (1 + exp(-x))
   ResultF ans = ResultF::FromRaw(out);
 
   // print a , -a , out ,ans
-  printf("====================================================\n");
-  printf("a = %08X , -a = %08X , out = %08lX , ans = %08X \n", static_cast<int>(a.raw()), static_cast<int>(-a.raw()), out, static_cast<int>(ans.raw()));
+  // printf("====================================================\n");
+  // printf("a = %08X , -a = %08X , out = %08lX , ans = %08X \n", static_cast<int>(a.raw()), static_cast<int>(-a.raw()), out, static_cast<int>(ans.raw()));
   return ans;
   // return one_over_one_plus_x_for_x_in_0_1(exp_on_negative_values(-a));
 }
@@ -884,6 +884,8 @@ FixedPoint<tRawType, 0> logistic_on_positive_values(
 // Returns logistic(x) = 1 / (1 + exp(-x)) for any x.
 template <typename tRawType, int tIntegerBits>
 FixedPoint<tRawType, 0> logistic(FixedPoint<tRawType, tIntegerBits> a) {
+  cfu_op0(0,0,0);
+
   typedef FixedPoint<tRawType, tIntegerBits> InputF;
   typedef FixedPoint<tRawType, 0> ResultF;
   tRawType mask_if_positive = MaskIfGreaterThan(a, InputF::Zero());

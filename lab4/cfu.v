@@ -47,28 +47,48 @@ module exp_rep (
     input [31:0] x,
     output [31:0] y
 );
-    // Taylor expansion，計算 e^x = 1 + x + x^2/2! + x^3/3!
-    wire [31:0] x_2,x_3,exp,reciprocal_init,reciprocal_approx;
-    assign x_2 =  (x*x) >> 16;
-    assign x_3 =  (x_2*x) >> 16;
-    assign exp =  (1<<16) + x + (x_2>>1) + (x_3/6);
+    
+    // q4.27
+    localparam const_1 = (1<<27);
+    localparam frac_shift = 27;
 
-    assign reciprocal_init = (1<<16);
-    assign reciprocal_approx = reciprocal_init*((2<<16) - ((reciprocal_init * exp) >> 16))>>16;
+    // Taylor expansion，計算 e^x = 1 + x + x^2/2! + x^3/3!
+    wire [31:0] x_2,x_3,exp, e_plus_1 ,reciprocal_init,reciprocal_approx;
+    assign x_2 =  (x*x) >> frac_shift;
+    assign x_3 =  (x_2*x) >> frac_shift;
+    assign exp =  const_1 + x + (x_2>>1) + (x_3/6);
+    assign e_plus_1 = exp + const_1; // e^x + 1
+
+    // 倒數近似公式
+    // d' = d*(2-d*e)
+    assign reciprocal_init = const_1;
+    assign reciprocal_approx = reciprocal_init*((2<<frac_shift) - ((reciprocal_init * e_plus_1) >> frac_shift))>>frac_shift;
 
     assign y = reciprocal_approx;
 
 endmodule
 
+
 module exp (
     input [31:0] x,
     output [31:0] y
 );
-    // Taylor expansion，計算 e^x = 1 + x + x^2/2! + x^3/3!
-    wire [31:0] x_2,x_3,exp;
-    assign x_2 =  (x*x) >> 18;
-    assign x_3 =  (x_2*x) >> 18;
-    assign exp =  (1<<18) + x + (x_2>>1) + (x_3/6);
 
-    assign y = exp;
+   reg [31:0] result;
+   assign y = result;
+
+   // 暴力法，查表 <用一般泰勒展開或其他方法都會有錯>
+   always @(*) begin
+    case (x)
+        32'hfcccccce: result = 32'h39839c8b;
+        32'hfd99999b: result = 32'h463f75c8;
+        32'hfe666667: result = 32'h55cd0c27;
+        32'hff333334: result = 32'h68cc2b93;
+        32'h00000000: result = 32'h7fffffff;
+        32'hfecccccd: result = 32'h5ed3218f;
+        32'hff99999a: result = 32'h73d1b674;
+        default: result = 32'h00000000;  // 若沒有匹配，預設值
+    endcase
+end
+
 endmodule

@@ -27,6 +27,7 @@
 #include "../internal/detect_platform.h"
 #include "cfu.h"
 #include "stdio.h"
+// #include <iostream>
 
 namespace gemmlowp {
 
@@ -752,8 +753,72 @@ FixedPoint<tRawType, 0> exp_on_negative_values(
 
   ResultF ans  = ResultF::FromRaw(cfu_op1(1,a.raw(),0));
 
+  // printf("====================================\n");
+  // printf("a: %08lx, result: %08lx\n", static_cast<unsigned long>(a.raw()), static_cast<unsigned long>(ans.raw()));
+
   return ans;
 }
+// template <typename tRawType, int tIntegerBits>
+// FixedPoint<tRawType, 0> exp_on_negative_values(
+//     FixedPoint<tRawType, tIntegerBits> a) {
+//   typedef FixedPoint<tRawType, tIntegerBits> InputF;
+//   typedef FixedPoint<tRawType, 0> ResultF;
+
+//   FixedPoint<tRawType, 0> ans  = FixedPoint<tRawType, 0>::FromRaw(cfu_op1(1,(a).raw(),0));
+
+
+
+//   static constexpr int kFractionalBits = InputF::kFractionalBits;
+//   static constexpr int kIntegerBits = InputF::kIntegerBits;
+//   const InputF kOneQuarter = InputF::template ConstantPOT<-2>();
+//   InputF mask = kOneQuarter - InputF::FromScalarRaw(1);
+//   InputF a_mod_quarter_minus_one_quarter = (a & mask) - kOneQuarter;
+
+//   ResultF result = exp_on_interval_between_negative_one_quarter_and_0_excl(
+//       Rescale<0>(a_mod_quarter_minus_one_quarter));
+
+
+//   tRawType remainder = (a_mod_quarter_minus_one_quarter - a).raw();
+
+// #define GEMMLOWP_EXP_BARREL_SHIFTER(Exponent, FixedPointMultiplier)         
+//   if (kIntegerBits > Exponent) {                                            
+//     const ResultF kMultiplier = GEMMLOWP_CHECKED_FIXEDPOINT_CONSTANT(       
+//         ResultF, FixedPointMultiplier, std::exp(-std::pow(2.0, Exponent))); 
+//     static constexpr int kShiftAmount =                                     
+//         kIntegerBits > Exponent ? kFractionalBits + Exponent : 0;           
+//     result = SelectUsingMask(                                               
+//         MaskIfNonZero(BitAnd(remainder, Dup<tRawType>(1 << kShiftAmount))), 
+//         result * kMultiplier, result);                                      
+//   }
+
+//   GEMMLOWP_EXP_BARREL_SHIFTER(-2, 1672461947);
+//   GEMMLOWP_EXP_BARREL_SHIFTER(-1, 1302514674);
+//   GEMMLOWP_EXP_BARREL_SHIFTER(+0, 790015084);
+//   GEMMLOWP_EXP_BARREL_SHIFTER(+1, 290630308);
+//   GEMMLOWP_EXP_BARREL_SHIFTER(+2, 39332535);
+//   GEMMLOWP_EXP_BARREL_SHIFTER(+3, 720401);
+//   GEMMLOWP_EXP_BARREL_SHIFTER(+4, 242);
+
+// #undef GEMMLOWP_EXP_BARREL_SHIFTER
+
+//   static constexpr int clampB = kIntegerBits > 5 ? 36 - kIntegerBits : 0;
+//   if (kIntegerBits > 5) {
+//     const InputF clamp =
+//         GEMMLOWP_CHECKED_FIXEDPOINT_CONSTANT(InputF, -(1 << clampB), -32.0);
+//     result = SelectUsingMask(MaskIfLessThan(a, clamp), ResultF::Zero(), result);
+//   }
+
+  
+
+//   result = SelectUsingMask(MaskIfZero(a), ResultF::One(), result);
+
+//   // print a，result，ans
+//   printf("====================================\n");
+//   // printf("a: %08x, result: %08x, ans: %08x\n", a.raw(), result.raw(), ans.raw());
+//   printf("a: %08lx, result: %08lx, my: %08lx\n", static_cast<unsigned long>(a.raw()), static_cast<unsigned long>(result.raw()) , static_cast<unsigned long>(ans.raw()));
+
+//   return ans;
+// }
 
 // Implementation of tanh: (1 - exp(-2x)) / (1 + exp(-2x)).
 
@@ -843,7 +908,7 @@ FixedPoint<tRawType, 0> logistic_on_positive_values(
 // Returns logistic(x) = 1 / (1 + exp(-x)) for any x.
 template <typename tRawType, int tIntegerBits>
 FixedPoint<tRawType, 0> logistic(FixedPoint<tRawType, tIntegerBits> a) {
-  cfu_op0(0,0,0);
+  // cfu_op0(0,0,0);
 
   typedef FixedPoint<tRawType, tIntegerBits> InputF;
   typedef FixedPoint<tRawType, 0> ResultF;

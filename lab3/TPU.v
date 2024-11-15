@@ -238,7 +238,7 @@ module PE(
 );  
     input clk , rst_n;
     input [1:0] state;
-    input [7:0]  in_west , in_north;
+    input signed [7:0]  in_west , in_north;
 
     output reg [7:0] out_east , out_south;
     output wire [31:0] psum;
@@ -246,7 +246,7 @@ module PE(
     reg [31:0] maccout;
     reg [31:0] west_c , north_c; // temporary storage for west and north
 
-    wire [31:0] product;
+    wire  signed [31:0] product;
 
     localparam IDLE = 2'd0;
     localparam READ = 2'd1;

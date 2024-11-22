@@ -271,6 +271,30 @@ void do_matmul_num(int test_num) {
     3. Receive data from CFU and place it to `C_arr`.
         - you may use __asm volatile("NOP") to wait some cycles if unstable.
   */ 
+   cfu_op0(1,0,0); // reset
+
+   cfu_op0(2,K,K); // set K
+
+  //  int k_ret = cfu_op0(3,0,0); // get K
+
+    cfu_op0(4,M,M); // set M
+
+    // int m_ret = cfu_op0(5,0,0); // get M
+
+    cfu_op0(6,N,N); // set N
+
+    // int n_ret = cfu_op0(7,0,0); // get N
+
+    // set Buffer A
+    for (int idx = 0; idx < 64; idx++) {
+        cfu_op1(8, idx , A_arr[test_num][idx]); // 一次存 32 bit = 4 個數
+        uint32_t a_ret = cfu_op1(9, idx , 0);
+        printf ("Set A: %08lX, Return A: %08lX \n", A_arr[test_num][idx] , a_ret);
+    }
+
+    // printf ("Set K: %d, Return K: %d\n", K , k_ret);
+    // printf ("Set M: %d, Return M: %d\n" , M , m_ret);
+    // printf ("Set N: %d, Return N: %d\n" , N , n_ret);
 
   // =====================================================
   // DO NOT MODIFY ANYTHING "BELOW" THIS LINE !!

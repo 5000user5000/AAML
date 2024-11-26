@@ -71,13 +71,13 @@ parameter FINISH = 2'd3;
 
 // busy signal，本想寫在 controller 裡面，但是線接回來的話，會造成 tpu busy signal 晚一個 cycle，造成錯誤
 always @(posedge clk or negedge rst_n) begin
-    if(!rst_n)begin
+    if (!rst_n) begin
+        busy <= 0;
+    end else if (in_valid) begin
+        busy <= 1;
+    end else if (n_state == FINISH) begin
         busy <= 0;
     end
-    if(in_valid)
-        busy <= 1;
-    else if(n_state == FINISH)
-        busy <= 0;
 end
 
 
@@ -246,7 +246,7 @@ module PE(
     reg [31:0] maccout;
     reg [31:0] west_c , north_c; // temporary storage for west and north
 
-    wire  signed [31:0] product;
+    wire signed [31:0] product;
 
     localparam IDLE = 2'd0;
     localparam READ = 2'd1;
@@ -254,26 +254,18 @@ module PE(
     assign psum = maccout;
     assign product = in_west * in_north;
 
-    always @(negedge rst_n) begin
-        maccout <= 0;
-        west_c <= 0;
-        north_c <= 0;
-    end
-
-    always @(negedge clk) begin
-        if(state == READ) begin
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            maccout <= 0;
+            out_east <= 0;
+            out_south <= 0;
+        end else if (state == READ) begin
             maccout <= maccout + product;
-            west_c <= in_west;
-            north_c <= in_north;
-        end
-    end
-
-    always @(posedge clk)begin
-        if(state == IDLE) begin
+            out_east <= in_west;
+            out_south <= in_north;
+        end else if (state == IDLE) begin
             maccout <= 0;
         end
-        out_east <= west_c;
-        out_south <= north_c;
     end
 endmodule
 

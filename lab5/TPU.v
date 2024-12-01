@@ -1,4 +1,8 @@
-module TPU(
+module TPU 
+#(
+    parameter ADDR_BITS=12
+)
+(
     clk,
     rst_n,
 
@@ -34,17 +38,17 @@ input [7:0]      N;
 output  reg      busy;
 
 output           A_wr_en;
-output [15:0]    A_index;
+output [ADDR_BITS-1:0]    A_index;
 output [31:0]    A_data_in;
 input  [31:0]    A_data_out;
 
 output           B_wr_en;
-output [15:0]    B_index;
+output [ADDR_BITS-1:0]    B_index;
 output [31:0]    B_data_in;
 input  [31:0]    B_data_out;
 
 output           C_wr_en;
-output [15:0]    C_index;
+output [ADDR_BITS-1:0]    C_index;
 output [127:0]   C_data_in;
 input  [127:0]   C_data_out;
 
@@ -488,7 +492,11 @@ endmodule
 
 // 控制信號變化，以及狀態轉換和資料寫入
 // 原本資料寫入要多開一個 module，但大多的資料都在這，還要另外接線出去，會很麻煩，加上時序也可能造成一些問題，所以直接在這寫
-module controller(
+module controller
+#(
+    parameter ADDR_BITS=12
+)
+(
     clk,
     rst_n,
     in_valid,
@@ -533,9 +541,9 @@ module controller(
     output [31:0] A_data_in;
     output [31:0] B_data_in;
     output [127:0] C_data_in;
-    output [15:0] A_index;
-    output [15:0] B_index;
-    output [15:0] C_index;
+    output [ADDR_BITS-1:0] A_index;
+    output [ADDR_BITS-1:0] B_index;
+    output [ADDR_BITS-1:0] C_index;
     output wire [31:0] counter_wire;
 
     // 狀態和下一個狀態

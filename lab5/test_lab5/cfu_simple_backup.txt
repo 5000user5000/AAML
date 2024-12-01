@@ -1,0 +1,277 @@
+`include "TPU.v"
+// `include "test_tpu.v"
+`include "global_buffer_bram.v" 
+
+// 目前這版會卡住,不知是哪裡死循環了。好像是 rsp_valid一直拉不起來,所以第一個指令就會卡住
+
+
+module Cfu
+#(  parameter ADDR_BITS = 12,
+    parameter DATA_BITS = 32,
+    parameter C_BITS    = 128
+)(
+  input               cmd_valid,
+  output  reg         cmd_ready,
+  input      [9:0]    cmd_payload_function_id,
+  input      [31:0]   cmd_payload_inputs_0,
+  input      [31:0]   cmd_payload_inputs_1,
+  output  reg         rsp_valid,
+  input               rsp_ready,
+  output  reg [31:0]  rsp_payload_outputs_0,
+  input               reset,
+  input               clk
+);
+
+  //----- declare internal signals -----
+  reg rst_n;
+  reg in_valid;
+  reg [31:0] K, M, N;
+  wire [6:0] op;
+
+  wire busy;
+  wire [31:0] A_data_out, B_data_out;
+  wire [C_BITS-1:0] C_data_out;
+  wire A_wr_en , B_wr_en, C_wr_en;
+  wire A_wr_en_mux;
+  wire B_wr_en_mux;
+  wire C_wr_en_mux;
+  wire [ADDR_BITS-1:0] A_index;
+  wire [ADDR_BITS-1:0] B_index;
+  wire [31:0] A_data_in , B_data_in;
+  wire [C_BITS-1:0] C_data_in;
+  wire [31:0] A_data_in_mux;
+  wire [31:0] B_data_in_mux;
+  wire [C_BITS-1:0] C_data_in_mux;
+
+  reg A_wr_en_init;
+  reg B_wr_en_init;
+  reg C_wr_en_init;
+
+  wire [ADDR_BITS-1:0] A_index_mux , B_index_mux , C_index_mux;
+  reg [ADDR_BITS-1:0] A_index_init, B_index_init, C_index_init;
+  reg [31:0] A_data_in_init, B_data_in_init;
+  reg [C_BITS-1:0] C_data_in_init;
+
+  assign op = cmd_payload_function_id[9:3]; // 判斷操作類型
+
+  assign A_wr_en_mux = (in_valid | busy) ? A_wr_en : A_wr_en_init;
+  assign B_wr_en_mux = (in_valid | busy) ? B_wr_en : B_wr_en_init;
+  assign C_wr_en_mux = (busy) ? C_wr_en : C_wr_en_init;
+
+  assign A_index_mux = (in_valid | busy) ? A_index : A_index_init;
+  assign B_index_mux = (in_valid | busy) ? B_index : B_index_init;
+  assign C_index_mux = (busy) ? C_index : C_index_init;
+
+  assign A_data_in_mux = (in_valid) ? A_data_in : A_data_in_init;
+  assign B_data_in_mux = (in_valid) ? B_data_in : B_data_in_init;
+  assign C_data_in_mux = (busy) ? C_data_in : C_data_in_init;
+
+  // 避免 busy 信號的 glitch
+  reg busy_prev;
+  always @(posedge clk or posedge reset) begin
+    if (reset) begin
+      busy_prev <= 1'b0;
+    end else begin
+      busy_prev <= busy;
+    end
+  end
+  wire busy_done = busy_prev && !busy; // 檢測 `busy` 的下降沿
+
+  //--- 模組實例化 ---
+  global_buffer_bram #(
+      .ADDR_BITS(ADDR_BITS),
+      .DATA_BITS(DATA_BITS)
+  ) gbuff_A (
+      .clk(clk),
+      .rst_n(reset),
+      .ram_en(1'b1),
+      .wr_en(A_wr_en_mux),
+      .index(A_index_mux),
+      .data_in(A_data_in_mux),
+      .data_out(A_data_out)
+  );
+
+  global_buffer_bram #(
+      .ADDR_BITS(ADDR_BITS),
+      .DATA_BITS(DATA_BITS)
+  ) gbuff_B (
+      .clk(clk),
+      .rst_n(reset),
+      .ram_en(1'b1),
+      .wr_en(B_wr_en_mux),
+      .index(B_index_mux),
+      .data_in(B_data_in_mux),
+      .data_out(B_data_out)
+  );
+
+  global_buffer_bram #(
+      .ADDR_BITS(ADDR_BITS),
+      .DATA_BITS(C_BITS)
+  ) gbuff_C (
+      .clk(clk),
+      .rst_n(reset),
+      .ram_en(1'b1),
+      .wr_en(C_wr_en_mux),
+      .index(C_index_mux),
+      .data_in(C_data_in_mux),
+      .data_out(C_data_out)
+  );
+
+  TPU tpu (
+      .clk(clk),
+      .rst_n(rst_n),
+      .in_valid(in_valid),
+      .K(K),
+      .M(M),
+      .N(N),
+      .busy(busy),
+      .A_wr_en(A_wr_en),
+      .A_index(A_index),
+      .A_data_in(A_data_in),
+      .A_data_out(A_data_out),
+      .B_wr_en(B_wr_en),
+      .B_index(B_index),
+      .B_data_in(B_data_in),
+      .B_data_out(B_data_out),
+      .C_wr_en(C_wr_en),
+      .C_index(C_index),
+      .C_data_in(C_data_in),
+      .C_data_out(C_data_out)
+  );
+
+  localparam S0 = 4'b0000;
+  localparam S1 = 4'b0001;
+  localparam S3 = 4'b0011;
+  localparam S4 = 4'b0100;
+  localparam S10 = 4'b1010;
+
+  reg [3:0] 	state;
+
+  always @(posedge clk or posedge reset) begin
+    if (reset) begin
+      state <= S0;
+      cmd_ready <= 1'b1;
+      rsp_valid <= 1'b0;
+      rst_n <= 1'b1;
+      in_valid <= 1'b0;
+    end else begin
+      case (state)
+        S0: begin
+          cmd_ready <= 1'b1; // 可以接受新命令
+          if (cmd_valid && cmd_ready) begin
+            cmd_ready <= 1'b0; // 接受命令
+            case (op)
+              7'd1: begin // Reset
+                rst_n <= 1'b0;
+                state <= S4;
+              end
+              7'd2: begin // Set K
+                K <= cmd_payload_inputs_0;
+                state <= S4;
+              end
+              7'd3: begin // Read K
+                rsp_payload_outputs_0 <= K;
+                rsp_valid <= 1'b1;
+                state <= S3;
+              end
+              7'd4: begin // Set M
+                M <= cmd_payload_inputs_0;
+                state <= S4;
+              end
+              7'd5: begin // Read M
+                rsp_payload_outputs_0 <= M;
+                rsp_valid <= 1'b1;
+                state <= S3;
+              end
+              7'd6: begin // Set N
+                N <= cmd_payload_inputs_0;
+                state <= S4;
+              end
+              7'd7: begin // Read N
+                rsp_payload_outputs_0 <= N;
+                rsp_valid <= 1'b1;
+                state <= S3;
+              end
+              7'd8: begin // Set buffer A
+                A_index_init <= cmd_payload_inputs_0[ADDR_BITS-1:0];
+                A_data_in_init <= cmd_payload_inputs_1;
+                A_wr_en_init <= 1'b1;
+                state <= S4;
+              end
+              7'd9: begin // Read buffer A
+                A_wr_en_init <= 1'b0;
+                A_index_init <= cmd_payload_inputs_0[ADDR_BITS-1:0];
+                rsp_payload_outputs_0 <= A_data_out;
+                rsp_valid <= 1'b1;
+                state <= S3;
+              end
+              7'd10: begin // Set buffer B
+                B_index_init <= cmd_payload_inputs_0[ADDR_BITS-1:0];
+                B_data_in_init <= cmd_payload_inputs_1;
+                B_wr_en_init <= 1'b1;
+                state <= S4;
+              end
+              7'd11: begin // Read buffer B
+                B_wr_en_init <= 1'b0;
+                B_index_init <= cmd_payload_inputs_0[ADDR_BITS-1:0];
+                rsp_payload_outputs_0 <= B_data_out;
+                rsp_valid <= 1'b1;
+                state <= S3;
+              end
+              7'd12: begin // TPU 運算
+                in_valid <= 1'b1;
+                state <= S10;
+              end
+              7'd13: begin // Read busy
+                rsp_payload_outputs_0 <= busy;
+                rsp_valid <= 1'b1;
+                state <= S3;
+              end
+              7'd14: begin // Read buffer C part 1
+                C_index_init <= cmd_payload_inputs_0[ADDR_BITS-1:0];
+                rsp_payload_outputs_0 <= C_data_out[31:0];
+                rsp_valid <= 1'b1;
+                state <= S3;
+              end
+              7'd15: begin // Read buffer C part 2
+                C_index_init <= cmd_payload_inputs_0[ADDR_BITS-1:0];
+                rsp_payload_outputs_0 <= C_data_out[63:32];
+                rsp_valid <= 1'b1;
+                state <= S3;
+              end
+              7'd16: begin // Read buffer C part 3
+                C_index_init <= cmd_payload_inputs_0[ADDR_BITS-1:0];
+                rsp_payload_outputs_0 <= C_data_out[95:64];
+                rsp_valid <= 1'b1;
+                state <= S3;
+              end
+              7'd17: begin // Read buffer C part 4
+                C_index_init <= cmd_payload_inputs_0[ADDR_BITS-1:0];
+                rsp_payload_outputs_0 <= C_data_out[127:96];
+                rsp_valid <= 1'b1;
+                state <= S3;
+              end
+              default: state <= S4; // 未知命令
+            endcase
+          end
+        end
+        S3: begin
+          if (rsp_ready) begin
+            rsp_valid <= 1'b0; // 響應被消耗
+            state <= S4;
+          end
+        end
+        S4: begin
+          cmd_ready <= 1'b1; // 返回空閒狀態
+          state <= S0;
+        end
+        S10: begin // TPU 運算
+          in_valid <= 1'b0; // 單周期脈衝
+          if (busy_done) begin
+            state <= S4; // TPU 運算完成
+          end
+        end
+      endcase
+    end
+  end
+endmodule

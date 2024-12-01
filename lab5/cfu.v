@@ -35,7 +35,7 @@ module Cfu
   //----- declare internal signals -----
   reg rst_n;
   reg in_valid;
-  reg [31:0] K, M, N;
+  reg [7:0] K, M, N;
   wire [6:0] op;
 
   wire busy;
@@ -47,6 +47,7 @@ module Cfu
   wire C_wr_en_mux;
   wire [ADDR_BITS-1:0] A_index;
   wire [ADDR_BITS-1:0] B_index;
+  wire [ADDR_BITS-1:0] C_index;
   wire [31:0] A_data_in , B_data_in;
   wire [C_BITS-1:0] C_data_in;
   wire [31:0] A_data_in_mux;

@@ -159,7 +159,7 @@ module Cfu
 
 
   reg [3:0] 	state;
-  reg [3:0] 	comp_cnt;
+  reg [31:0] 	comp_cnt;
   always@(negedge clk) begin
     if (reset) begin
       state <= S0;

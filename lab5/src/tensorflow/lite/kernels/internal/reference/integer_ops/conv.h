@@ -19,6 +19,52 @@ limitations under the License.
 
 #include "tensorflow/lite/kernels/internal/common.h"
 #include "tensorflow/lite/kernels/internal/portable_tensor_utils.h"
+#include <cstdio>
+
+/*
+int32_t matrix_fmaps[65536][65536];
+int32_t matrix_filter[65536][65536];
+int32_t matrix_result[65536][65536];
+*/
+int32_t matrix_fmaps[1024][1024];
+int32_t matrix_filter[1024][1024];
+int32_t matrix_result[1024][1024];
+
+void matrix_multiply(int32_t* A, int rowsA, int colsA, int32_t* B, int rowsB, int colsB, int32_t* result) {
+    // Check if matrix dimensions are compatible for multiplication
+    if (colsA != rowsB) {
+        printf("Error: Incompatible matrix dimensions for multiplication\n");
+        return;
+    }
+
+    // Perform matrix multiplication
+    for (int i = 0; i < rowsA; ++i) {
+        for (int j = 0; j < colsB; ++j) {
+            result[i * colsB + j] = 0;
+            for (int k = 0; k < colsA; ++k) {
+                result[i * colsB + j] += A[i * colsA + k] * B[k * colsB + j];
+            }
+        }
+    }
+}
+
+void matrix_multiply2D(int rowsA, int colsA, int rowsB, int colsB) {
+    // Check if matrix dimensions are compatible for multiplication
+    if (colsA != rowsB) {
+        printf("Error: Incompatible matrix dimensions for multiplication\n");
+        return;
+    }
+
+    // Perform matrix multiplication
+    for (int i = 0; i < rowsA; ++i) {
+        for (int j = 0; j < colsB; ++j) {
+            matrix_result[i][j] = 0;
+            for (int k = 0; k < colsA; ++k) {
+                matrix_result[i][j] += matrix_fmaps[i][k] * matrix_filter[k][j];
+            }
+        }
+    }
+}
 
 namespace tflite {
 namespace reference_integer_ops {
@@ -68,57 +114,138 @@ inline void ConvPerChannel(
   const int filters_per_group = output_depth / groups;
   const int output_height = output_shape.Dims(1);
   const int output_width = output_shape.Dims(2);
+/*
+  printf("input_depth: %d\n",input_depth);
+  printf("filter_input_depth: %d\n",filter_input_depth);
+  printf("output_depth: %d\n",output_depth);
+  printf("groups: %d\n",groups);
+  printf("filters_per_group: %d\n",filters_per_group);
+*/
+
+
+  // fmaps_num * fmaps_size
+  int fmaps_num = output_height * output_width;
+  int fmaps_size = filter_height * filter_width * input_depth;
+
+  // filter_size * filter_num
+  int filter_size = filter_height * filter_width * filter_input_depth;
+  int filter_num = output_depth;
+
+  // result_size * result_channel
+  int result_size = fmaps_num;
+  int result_num = filter_num;
+
+  printf("\n\n");
+  printf("fmaps_num: %d\n",fmaps_num);
+  printf("fmaps_size: %d\n",fmaps_size);
+  printf("filter_size: %d\n",filter_size);
+  printf("filter_num: %d\n",filter_num);
+  printf("result_size: %d\n", result_size);
+  printf("result_num: %d\n",result_num);
+  int32_t acc;
+
+  int fmaps_row;
+  int fmaps_col;
+
+  int filter_row;
+  int filter_col;
+
+  int result_row;
+  int result_col;
+
+  for (int batch = 0; batch < batches; ++batch)
+    for (int out_y = 0; out_y < output_height; ++out_y)
+      for (int out_x = 0; out_x < output_width; ++out_x)
+        for (int out_channel = 0; out_channel < output_depth; ++out_channel) {
+          output_data[Offset(output_shape, batch, out_y, out_x, out_channel)] =
+		  static_cast<int8_t> (0);
+	}
+
+
   for (int batch = 0; batch < batches; ++batch) {
+
+      
+//-------------------------------------------------------------------------------
+    
+//  fmaps prepare : 3D to 2D
+
     for (int out_y = 0; out_y < output_height; ++out_y) {
       const int in_y_origin = (out_y * stride_height) - pad_height;
       for (int out_x = 0; out_x < output_width; ++out_x) {
-        const int in_x_origin = (out_x * stride_width) - pad_width;
+        const int in_x_origin = (out_x * stride_width) - pad_width;       
         for (int out_channel = 0; out_channel < output_depth; ++out_channel) {
           auto group = out_channel / filters_per_group;
-          int32_t acc = 0;
+//----
           for (int filter_y = 0; filter_y < filter_height; ++filter_y) {
             const int in_y = in_y_origin + dilation_height_factor * filter_y;
             for (int filter_x = 0; filter_x < filter_width; ++filter_x) {
               const int in_x = in_x_origin + dilation_width_factor * filter_x;
-
+//-----
               // Zero padding by omitting the areas outside the image.
-              const bool is_point_inside_image =
-                  (in_x >= 0) && (in_x < input_width) && (in_y >= 0) &&
-                  (in_y < input_height);
+              const bool is_point_inside_image = (in_x >= 0) && (in_x < input_width) && (in_y >= 0) && (in_y < input_height);
 
-              if (!is_point_inside_image) {
-                continue;
-              }
+              // if (!is_point_inside_image) {
+              //   continue;
+              // }
+            
+            int32_t input_val = 0;
+            
+	          for (int in_channel = 0; in_channel < filter_input_depth; ++in_channel) {
 
-              for (int in_channel = 0; in_channel < filter_input_depth;
-                   ++in_channel) {
-                int32_t input_val =
-                    input_data[Offset(input_shape, batch, in_y, in_x,
-                                      in_channel + group * filter_input_depth)];
-                int32_t filter_val = filter_data[Offset(
-                    filter_shape, out_channel, filter_y, filter_x, in_channel)];
-                // Accumulate with 32 bits accumulator.
-                // In the nudging process during model quantization, we force
-                // real value of 0.0 be represented by a quantized value. This
-                // guarantees that the input_offset is a int8_t, even though
-                // it is represented using int32_t. int32_t += int8_t *
-                // (int8_t - int8_t) so the highest value we can get from each
-                // accumulation is [-127, 127] * ([-128, 127] -
-                // [-128, 127]), which is [-32512, 32512]. log2(32512)
-                // = 14.98, which means we can accumulate at least 2^16
-                // multiplications without overflow. The accumulator is
-                // applied to a filter so the accumulation logic will hold as
-                // long as the filter size (filter_y * filter_x * in_channel)
-                // does not exceed 2^16, which is the case in all the models
-                // we have seen so far.
-                // TODO(b/174275578): Add a check to make sure the
-                // accumulator depth is smaller than 2^16.
-                acc += filter_val * (input_val + input_offset);
+                if(is_point_inside_image){
+                  input_val = input_data[Offset(input_shape, batch, in_y, in_x, in_channel + group * filter_input_depth)] + input_offset;
+                }
+                // int32_t input_val = input_data[Offset(input_shape, batch, in_y, in_x, in_channel + group * filter_input_depth)] + input_offset;
+
+                fmaps_row = out_x + out_y * output_width; //fmaps_num // location index
+                fmaps_col = filter_x + filter_y * filter_width  + in_channel * (filter_height * filter_width); //fmaps_size //content * channel
+                //matrix_fmaps[fmaps_row * fmaps_size + fmaps_col] = input_val;
+                matrix_fmaps[fmaps_row][fmaps_col] = input_val;
               }
             }
           }
+	}
+      }
+    }
 
-          if (bias_data) {
+
+//----------------------------------------------------------------------------------------------------
+//  filter prepare : 4D to 2D
+
+for (int out_channel = 0; out_channel < output_depth; ++out_channel) {
+  for (int filter_y = 0; filter_y < filter_height; ++filter_y) {
+    for (int filter_x = 0; filter_x < filter_width; ++filter_x) {
+      for (int in_channel = 0; in_channel < filter_input_depth; ++in_channel) {
+        int32_t filter_val = filter_data[Offset(filter_shape, out_channel, filter_y, filter_x, in_channel)];
+
+        filter_row = filter_x + filter_y * filter_width + in_channel * (filter_height * filter_width); // filter_size
+        filter_col = out_channel; // filter_num
+
+        //matrix_filter[filter_row * filter_num + filter_col] = filter_val;
+        matrix_filter[filter_row][filter_col] = filter_val;
+      }
+    }
+  }
+}
+
+//----------------------------------------------------------------------------------------------------
+
+//  matrix_multiply(matrix_fmaps, fmaps_num, fmaps_size, matrix_filter, filter_size, filter_num, matrix_result);
+  matrix_multiply2D( fmaps_num, fmaps_size,  filter_size, filter_num);
+
+//----------------------------------------------------------------------------------------------------
+
+
+  for (int out_channel = 0; out_channel < output_depth; ++out_channel) {
+    for (int out_y = 0; out_y < output_height; ++out_y) {
+      for (int out_x = 0; out_x < output_width; ++out_x) {
+          result_row = out_x + out_y * output_width; // result_size
+	        result_col = out_channel; // result_num
+
+          //	  acc = matrix_result[result_row * result_num + result_col];
+          acc = matrix_result[result_row][result_col];
+
+	        if (bias_data) {
             acc += bias_data[out_channel];
           }
           acc = MultiplyByQuantizedMultiplier(
@@ -126,13 +253,12 @@ inline void ConvPerChannel(
           acc += output_offset;
           acc = std::max(acc, output_activation_min);
           acc = std::min(acc, output_activation_max);
-          output_data[Offset(output_shape, batch, out_y, out_x, out_channel)] =
-              static_cast<int8_t>(acc);
+          output_data[Offset(output_shape, batch, out_y, out_x, out_channel)] = static_cast<int8_t>(acc);
         }
       }
     }
-  }
-}
+  } // batch
+}  // ConvPerChannel
 
 inline void ConvPerChannelWithPackedInt4Weights(
     const ConvParams& params, const int32_t* output_multiplier,

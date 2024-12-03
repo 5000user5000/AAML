@@ -271,65 +271,47 @@ void do_matmul_num(int test_num) {
     3. Receive data from CFU and place it to `C_arr`.
         - you may use __asm volatile("NOP") to wait some cycles if unstable.
   */ 
-    printf("Reset\n");
+    // printf("Reset\n");
     cfu_op0(/* funct7= */ 1, /* in0= */ 0, /* in1= */ 0); // reset
     cfu_op0(/* funct7= */ 2, /* in0= */ K, /* in1= */ K); // Set parameter K
     cfu_op0(/* funct7= */ 4, /* in0= */ M, /* in1= */ M); // Set parameter M
     cfu_op0(/* funct7= */ 6, /* in0= */ N, /* in1= */ N); // Set parameter N
 
-    int K_ret =  cfu_op0(/* funct7= */ 3, /* in0= */ K, /* in1= */ K); // Read parameter K
-    int M_ret =  cfu_op0(/* funct7= */ 5, /* in0= */ M, /* in1= */ M); // Read parameter M
-    int N_ret =  cfu_op0(/* funct7= */ 7, /* in0= */ N, /* in1= */ N); // Read parameter N
-    printf("Set K: %d, Return K: %d\n", K, K_ret);
-    printf("Set M: %d, Return M: %d\n", M, M_ret);
-    printf("Set N: %d, Return N: %d\n", N, N_ret);
+    // int K_ret =  cfu_op0(/* funct7= */ 3, /* in0= */ K, /* in1= */ K); // Read parameter K
+    // int M_ret =  cfu_op0(/* funct7= */ 5, /* in0= */ M, /* in1= */ M); // Read parameter M
+    // int N_ret =  cfu_op0(/* funct7= */ 7, /* in0= */ N, /* in1= */ N); // Read parameter N
+    
 
-    // set Buffer A
+    //set Buffer A
     for (int idx = 0; idx < 64; idx++) {
         cfu_op0(/* funct7= */ 8, /* in0= */ idx, /* in1= */ A_arr[test_num][idx]); // Read global bufer A
-        int32_t ret = cfu_op0(9, idx, 0);
-        printf("Set Buffer A, in: %lX, \t\taddr: %x, \t\tout: %lX\n", A_arr[test_num][idx], idx, ret);
+        // int32_t ret = cfu_op0(9, idx, 0);
+        // printf("Set Buffer A, in: %lX, \t\taddr: %x, \t\tout: %lX\n", A_arr[test_num][idx], idx, ret);
     }
+
     // set Buffer B
     for (int idx = 0; idx < 64; idx++) {
         cfu_op0(/* funct7= */ 10, /* in0= */ idx, /* in1= */ B_arr[test_num][idx]); // Read global bufer B
-        int32_t ret2 = cfu_op0(11, idx, 0);
-        printf("Set Buffer B, in: %lX, \t\taddr: %x, \t\tout: %lX\n", B_arr[test_num][idx], idx, ret2);
+        // int32_t ret2 = cfu_op0(11, idx, 0);
+        // printf("Set Buffer B, in: %lX, \t\taddr: %x, \t\tout: %lX\n", B_arr[test_num][idx], idx, ret2);
     }
 
-    // Start CFU
-      printf("In valid\n");
-      int cnt = 0;
-      int cycle = cfu_op0(12, 0, 0); // reset
-      printf("cycle = %d\n", cycle);
-
-      // Check Status
-      while(1) {
-        int busy = cfu_op0( 13, 0, 0); 
-        cnt++;
-        if (!busy)
-          break;
-        if(cnt > 50)
-          break;
+    cfu_op0(12, 0, 0); // reset
+ 
+    // Get Buffer C
+    int c_idx = 0;
+    for(int block=0; block<4; block++) {
+      for (int idx = 0; idx < 16; idx++) {
+        int base = 4*block;
+        C_arr[idx][base] = cfu_op0(17, c_idx, 0);
+        C_arr[idx][base+1] = cfu_op0(16, c_idx , 0);
+        C_arr[idx][base+2] = cfu_op0(15, c_idx , 0);
+        C_arr[idx][base+3] = cfu_op0(14, c_idx , 0);
+        c_idx++;
       }
-      printf("busy cycle = %d\n", cnt);
-
-     // Get Buffer C
-    for (int idx = 0; idx < 64; idx++) {
-        // if (idx + 3 >= 64) {
-        //     break; // 防止越界访问
-        // }
-        uint32_t c_ret = cfu_op0(14, idx, 0);
-        uint32_t c_ret1 = cfu_op0(15, idx, 0);
-        uint32_t c_ret2 = cfu_op0(16, idx, 0);
-        uint32_t c_ret3 = cfu_op0(17, idx, 0);
-        // printf ("Return C: %08lX \n", c_ret);
-        printf ("Return C: %08lX, %08lX, %08lX, %08lX \n", c_ret, c_ret1, c_ret2, c_ret3);
-        // C_arr[test_num][idx] = cfu_op0(14, idx , 0);
-        // C_arr[test_num][idx+1] = cfu_op0(15, idx , 0);
-        // C_arr[test_num][idx+2] = cfu_op0(16, idx , 0);
-        // C_arr[test_num][idx+3] = cfu_op0(17, idx , 0);
     }
+
+
 
   // =====================================================
   // DO NOT MODIFY ANYTHING "BELOW" THIS LINE !!

@@ -53,7 +53,6 @@ output [127:0]   C_data_in;
 input  [127:0]   C_data_out;
 
 
-
 //* Implement your design here
 
 // 先把 K, M, N 放到 reg，不然 K, M, N 的值只會存在一個 cycle
@@ -83,7 +82,6 @@ always @(posedge clk or negedge rst_n) begin
         busy <= 0;
     end
 end
-
 
 
 always @(posedge clk) begin
@@ -186,8 +184,9 @@ module data_loader(
     reg [23:0] temp_out3;
     reg [31:0] temp_out4;
 
-    assign out_wire = out;
+    assign out_wire = (state == READ) ? out : 32'b0; // 明確控制
 
+    
     always @(posedge clk or negedge rst_n) begin
         if(!rst_n) begin
             temp_out1 <= 0;
@@ -201,14 +200,7 @@ module data_loader(
             temp_out3 <= 0;
             temp_out4 <= 0;
             out <= 0;
-        end 
-        // else if(state == READ) begin  
-        //     out <= {temp_out1[7:0], temp_out2[15:8], temp_out3[23:16], temp_out4[31:24]}; // 各自取開頭 8 bits，並組合
-        //     end
-        end
-    
-    always @(posedge clk) begin
-        if(state == READ) begin
+        end  else if(state == READ) begin
             if(counter < K_reg) begin
                 temp_out1 <= in_data[31:24];
                 temp_out2 <= {temp_out2[7:0] , in_data[23:16]}; // 向前 shift 8 bits，並將新資料放入
@@ -301,13 +293,12 @@ module systolic_array(
     wire [95:0] dataout_h;
     wire [95:0] dataout_v;
 
-    // 組合 psum 的數據，psum_1 是指第一個 row 的 psum 組合，以此類推
-    assign psum_1 = {psum[0], psum[1], psum[2], psum[3]};
-    assign psum_2 = {psum[4], psum[5], psum[6], psum[7]};
-    assign psum_3 = {psum[8], psum[9], psum[10], psum[11]};
-    assign psum_4 = {psum[12], psum[13], psum[14], psum[15]};
+    parameter WRITE = 2'd2;
 
-
+    assign psum_1 = (state == WRITE) ? {psum[0], psum[1], psum[2], psum[3]} : 128'b0;
+    assign psum_2 = (state == WRITE) ? {psum[4], psum[5], psum[6], psum[7]}: 128'b0;;
+    assign psum_3 = (state == WRITE) ? {psum[8], psum[9], psum[10], psum[11]}: 128'b0;;
+    assign psum_4 = (state == WRITE) ? {psum[12], psum[13], psum[14], psum[15]}: 128'b0;;
 
     // genvar 和 generate 反而比較麻煩，代碼也沒少多少，就直接寫了 16 個 PE
     // 順序 第一個 row  1 2 3 4，下一個 row 5 6 7 8
@@ -577,8 +568,8 @@ module controller
     assign state_wire = state;
     assign n_state_wire = n_state;
     assign counter_wire = counter;
-    assign A_index = idx_a;
-    assign B_index = idx_b;
+    assign A_index = (state == READ) ? idx_a : 0;
+    assign B_index = (state == READ) ? idx_b : 0;
     assign C_index = idx_c;
 
 

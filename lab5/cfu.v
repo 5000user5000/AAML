@@ -16,7 +16,9 @@ module Cfu
     parameter S7 = 4'b0111,
     parameter S8 = 4'b1000,
     parameter S9 = 4'b1001,
-    parameter S10 = 4'b1010
+    parameter S10 = 4'b1010,
+    parameter S11 = 4'b1011,
+    parameter S12 = 4'b1100
 
 )(
   input               cmd_valid,
@@ -64,25 +66,20 @@ module Cfu
   reg [C_BITS-1:0] C_data_in_init;
 
   assign op = cmd_payload_function_id[9:3]; // 用來判斷是哪一個operation，更新 K、M、N，寫入 buf A、B，開始 TPU 計算，寫到 buf C
-  // assign A_wr_en =  A_wr_en_init;
-  // assign B_wr_en =  B_wr_en_init;
-  // assign A_index =  A_index_init;
-  // assign B_index =  B_index_init;
-  // assign A_data_in =  A_data_in_init;
-  // assign B_data_in =  B_data_in_init;
-  // assign cmd_ready = ~rsp_valid;
 
-  assign A_wr_en_mux = (in_valid | busy) ? A_wr_en : A_wr_en_init;
-  assign B_wr_en_mux = (in_valid | busy) ? B_wr_en : B_wr_en_init;
-  assign C_wr_en_mux = (busy) ? C_wr_en : C_wr_en_init;
+  reg tpu_busy;
 
-  assign A_index_mux = (in_valid | busy) ? A_index : A_index_init;
-  assign B_index_mux = (in_valid | busy) ? B_index : B_index_init;
-  assign C_index_mux = (busy) ? C_index : C_index_init;
+  assign A_wr_en_mux = (in_valid | tpu_busy | busy) ? A_wr_en : A_wr_en_init;
+  assign B_wr_en_mux = (in_valid | tpu_busy | busy) ? B_wr_en : B_wr_en_init;
+  assign C_wr_en_mux = (tpu_busy | busy) ? C_wr_en : C_wr_en_init;
 
-  assign A_data_in_mux = (in_valid) ? A_data_in : A_data_in_init;
-  assign B_data_in_mux = (in_valid) ? B_data_in : B_data_in_init;
-  assign C_data_in_mux = (busy) ? C_data_in : C_data_in_init;
+  assign A_index_mux = (in_valid | tpu_busy | busy) ? A_index : A_index_init;
+  assign B_index_mux = (in_valid | tpu_busy | busy) ? B_index : B_index_init;
+  assign C_index_mux = (tpu_busy | busy) ? C_index : C_index_init;
+
+  assign A_data_in_mux = (in_valid | tpu_busy | busy) ? A_data_in : A_data_in_init;
+  assign B_data_in_mux = (in_valid | tpu_busy | busy) ? B_data_in : B_data_in_init;
+  assign C_data_in_mux = (tpu_busy | busy) ? C_data_in : C_data_in_init;
 
   // Control signals
 
@@ -154,10 +151,6 @@ module Cfu
     .C_data_out(C_data_out)
   );
 
-
-
-
-
   reg [3:0] 	state;
   reg [31:0] 	comp_cnt;
   always@(negedge clk) begin
@@ -221,10 +214,15 @@ module Cfu
           state <= S3;
         end
         S10: begin
-          // state <= S3;
-          if(busy) begin
+          state <= S11;   
+        end
+        S11: begin
+          state <= S12;
+        end
+        S12: begin
+          if(tpu_busy) begin
             comp_cnt <= comp_cnt + 1;
-            state <= S10;
+            state <= S12;
           end else begin
             state <= S3;
           end
@@ -233,6 +231,15 @@ module Cfu
     end
   end
 	
+  always @(posedge clk) begin
+    if (reset) begin
+      tpu_busy <= 1'b0;
+    end else begin
+      tpu_busy <= busy;
+    end
+  end
+
+
   // Set output value
   always @(posedge clk) begin
     case(state)
@@ -349,30 +356,41 @@ module Cfu
         cmd_ready <= 1'b0;
         rsp_valid <= 1'b0;
         rsp_payload_outputs_0 <= C_data_out[31:0];
+        // rsp_payload_outputs_0 <= buf_c[C_index_init][31:0];
       end
       S7: begin // Wait one cycle output buffer C
         rst_n <= 1'b1;
         cmd_ready <= 1'b0;
         rsp_valid <= 1'b0;
         rsp_payload_outputs_0 <= C_data_out[63:32];
+        // rsp_payload_outputs_0 <= buf_c[C_index_init][63:32];
       end
       S8: begin // Wait one cycle output buffer C
         rst_n <= 1'b1;
         cmd_ready <= 1'b0;
         rsp_valid <= 1'b0;
         rsp_payload_outputs_0 <= C_data_out[95:64];
+        // rsp_payload_outputs_0 <= buf_c[C_index_init][95:64];
       end
       S9: begin // Wait one cycle output buffer C
         rst_n <= 1'b1;
         cmd_ready <= 1'b0;
         rsp_valid <= 1'b0;
         rsp_payload_outputs_0 <= C_data_out[127:96];
+        // rsp_payload_outputs_0 <= buf_c[C_index_init][127:96];
       end
       S10: begin // TPU Computing ...
         in_valid <= 1'b0; // in_valid 只需一個 cycle 
         cmd_ready <= 1'b0;
         rsp_valid <= 1'b0; // 先設定為 1，用來確認 TPU 是否還在運算中
         // rsp_payload_outputs_0 <= busy;
+        // rsp_payload_outputs_0 <= comp_cnt;
+      end
+      S11: begin
+        in_valid <= 1'b0;
+      end
+      S12: begin
+        in_valid <= 1'b0;
         rsp_payload_outputs_0 <= comp_cnt;
       end
     endcase

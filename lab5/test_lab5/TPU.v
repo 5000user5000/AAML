@@ -25,7 +25,9 @@ module TPU
     C_wr_en,
     C_index,
     C_data_in,
-    C_data_out
+    C_data_out,
+
+    input_offset
 );
 
 
@@ -51,7 +53,7 @@ output           C_wr_en;
 output [ADDR_BITS-1:0]    C_index;
 output [127:0]   C_data_in;
 input  [127:0]   C_data_out;
-
+input  [31:0] input_offset;
 
 
 //* Implement your design here
@@ -83,7 +85,6 @@ always @(posedge clk or negedge rst_n) begin
         busy <= 0;
     end
 end
-
 
 
 always @(posedge clk) begin
@@ -125,7 +126,8 @@ systolic_array systolic(
     .psum_1(psum_1),
     .psum_2(psum_2),
     .psum_3(psum_3),
-    .psum_4(psum_4)
+    .psum_4(psum_4),
+    .input_offset(input_offset)
 );
 // 3. 用 controller 控制 PE 和 data_loader 的狀態以及寫入資料到 Buffer C
 controller ctrl(
@@ -186,8 +188,9 @@ module data_loader(
     reg [23:0] temp_out3;
     reg [31:0] temp_out4;
 
-    assign out_wire = out;
+    assign out_wire = (state == READ) ? out : 32'b0; // 明確控制
 
+    
     always @(posedge clk or negedge rst_n) begin
         if(!rst_n) begin
             temp_out1 <= 0;
@@ -201,14 +204,7 @@ module data_loader(
             temp_out3 <= 0;
             temp_out4 <= 0;
             out <= 0;
-        end 
-        // else if(state == READ) begin  
-        //     out <= {temp_out1[7:0], temp_out2[15:8], temp_out3[23:16], temp_out4[31:24]}; // 各自取開頭 8 bits，並組合
-        //     end
-        end
-    
-    always @(posedge clk) begin
-        if(state == READ) begin
+        end  else if(state == READ) begin
             if(counter < K_reg) begin
                 temp_out1 <= in_data[31:24];
                 temp_out2 <= {temp_out2[7:0] , in_data[23:16]}; // 向前 shift 8 bits，並將新資料放入
@@ -238,16 +234,18 @@ module PE(
 
     out_east, // output to east
     out_south,
-    psum // result
+    psum, // result
+    input_offset
 );  
     input clk , rst_n;
     input [1:0] state;
-    input signed [7:0]  in_west , in_north;
+    input [7:0]  in_west , in_north;
+    input [31:0] input_offset;
 
     output reg [7:0] out_east , out_south;
-    output wire [31:0] psum;
+    output wire signed [31:0] psum;
 
-    reg [31:0] maccout;
+    reg signed [31:0] maccout;
     reg [31:0] west_c , north_c; // temporary storage for west and north
 
     wire signed [31:0] product;
@@ -255,8 +253,15 @@ module PE(
     localparam IDLE = 2'd0;
     localparam READ = 2'd1;
 
+    wire signed [8:0] in_west_ext = $signed(in_west);
+    wire signed [8:0] in_west_offset = in_west_ext + $signed(input_offset[8:0]); 
+    wire signed [8:0] in_north_ext = $signed(in_north);
+
+    assign  product = in_west_offset  * in_north_ext;
+
+
     assign psum = maccout;
-    assign product = in_west * in_north;
+    // assign product = (in_west + $signed(input_offset) ) * in_north;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -282,7 +287,8 @@ module systolic_array(
     psum_1,
     psum_2,
     psum_3,
-    psum_4
+    psum_4,
+    input_offset
 );
 
     input clk;
@@ -290,6 +296,7 @@ module systolic_array(
     input [1:0] state;
     input [31:0] datain_h;
     input [31:0] datain_v;
+    input [31:0] input_offset;
 
     output wire [127:0] psum_1;
     output wire [127:0] psum_2;
@@ -301,13 +308,12 @@ module systolic_array(
     wire [95:0] dataout_h;
     wire [95:0] dataout_v;
 
-    // 組合 psum 的數據，psum_1 是指第一個 row 的 psum 組合，以此類推
-    assign psum_1 = {psum[0], psum[1], psum[2], psum[3]};
-    assign psum_2 = {psum[4], psum[5], psum[6], psum[7]};
-    assign psum_3 = {psum[8], psum[9], psum[10], psum[11]};
-    assign psum_4 = {psum[12], psum[13], psum[14], psum[15]};
+    parameter WRITE = 2'd2;
 
-
+    assign psum_1 = (state == WRITE) ? {psum[0], psum[1], psum[2], psum[3]} : 128'b0;
+    assign psum_2 = (state == WRITE) ? {psum[4], psum[5], psum[6], psum[7]}: 128'b0;;
+    assign psum_3 = (state == WRITE) ? {psum[8], psum[9], psum[10], psum[11]}: 128'b0;;
+    assign psum_4 = (state == WRITE) ? {psum[12], psum[13], psum[14], psum[15]}: 128'b0;;
 
     // genvar 和 generate 反而比較麻煩，代碼也沒少多少，就直接寫了 16 個 PE
     // 順序 第一個 row  1 2 3 4，下一個 row 5 6 7 8
@@ -328,7 +334,8 @@ module systolic_array(
         .in_north (datain_v[31:24]),
         .out_east (dataout_h[7:0]),
         .out_south (dataout_v[7:0]),
-        .psum (psum[0])
+        .psum (psum[0]),
+        .input_offset(input_offset)
     );
     PE pe2(
         .clk (clk),
@@ -338,7 +345,8 @@ module systolic_array(
         .in_north (datain_v[23:16]),
         .out_east (dataout_h[15:8]),
         .out_south (dataout_v[15:8]),
-        .psum (psum[1])
+        .psum (psum[1]),
+        .input_offset(input_offset)
     );
     PE pe3(
         .clk (clk),
@@ -348,7 +356,8 @@ module systolic_array(
         .in_north (datain_v[15:8]),
         .out_east (dataout_h[23:16]),
         .out_south (dataout_v[23:16]),
-        .psum (psum[2])
+        .psum (psum[2]),
+        .input_offset(input_offset)
     );
     PE pe4(
         .clk (clk),
@@ -358,7 +367,8 @@ module systolic_array(
         .in_north (datain_v[7:0]),
         .out_east (), // 這個是最後一個，所以不需要 output
         .out_south (dataout_v[31:24]),
-        .psum (psum[3])
+        .psum (psum[3]),
+        .input_offset(input_offset)
     );
 
     // 下一個 ROW
@@ -370,7 +380,8 @@ module systolic_array(
         .in_north (dataout_v[7:0]),
         .out_east (dataout_h[31:24]),
         .out_south (dataout_v[39:32]),
-        .psum (psum[4])
+        .psum (psum[4]),
+        .input_offset(input_offset)
     );
     PE pe6(
         .clk (clk),
@@ -380,7 +391,8 @@ module systolic_array(
         .in_north (dataout_v[15:8]),
         .out_east (dataout_h[39:32]),
         .out_south (dataout_v[47:40]),
-        .psum (psum[5])
+        .psum (psum[5]),
+        .input_offset(input_offset)
     );
     PE pe7(
         .clk (clk),
@@ -390,7 +402,8 @@ module systolic_array(
         .in_north (dataout_v[23:16]),
         .out_east (dataout_h[47:40]),
         .out_south (dataout_v[55:48]),
-        .psum (psum[6])
+        .psum (psum[6]),
+        .input_offset(input_offset)
     );
     PE pe8(
         .clk (clk),
@@ -400,7 +413,8 @@ module systolic_array(
         .in_north (dataout_v[31:24]),
         .out_east (),
         .out_south (dataout_v[63:56]),
-        .psum (psum[7])
+        .psum (psum[7]),
+        .input_offset(input_offset)
     );
 
     // 下一個 ROW
@@ -412,7 +426,8 @@ module systolic_array(
         .in_north (dataout_v[39:32]),
         .out_east (dataout_h[55:48]),
         .out_south (dataout_v[71:64]),
-        .psum (psum[8])
+        .psum (psum[8]),
+        .input_offset(input_offset)
     );
     PE pe10(
         .clk (clk),
@@ -422,7 +437,8 @@ module systolic_array(
         .in_north (dataout_v[47:40]),
         .out_east (dataout_h[63:56]),
         .out_south (dataout_v[79:72]),
-        .psum (psum[9])
+        .psum (psum[9]),
+        .input_offset(input_offset)
     );
     PE pe11(
         .clk (clk),
@@ -432,7 +448,8 @@ module systolic_array(
         .in_north (dataout_v[55:48]),
         .out_east (dataout_h[71:64]),
         .out_south (dataout_v[87:80]),
-        .psum (psum[10])
+        .psum (psum[10]),
+        .input_offset(input_offset)
     );
     PE pe12(
         .clk (clk),
@@ -442,7 +459,8 @@ module systolic_array(
         .in_north (dataout_v[63:56]),
         .out_east (),
         .out_south (dataout_v[95:88]),
-        .psum (psum[11])
+        .psum (psum[11]),
+        .input_offset(input_offset)
     );
 
     // 下一個 ROW
@@ -454,7 +472,8 @@ module systolic_array(
         .in_north (dataout_v[71:64]),
         .out_east (dataout_h[79:72]),
         .out_south (),
-        .psum (psum[12])
+        .psum (psum[12]),
+        .input_offset(input_offset)
     );
     PE pe14(
         .clk (clk),
@@ -464,7 +483,8 @@ module systolic_array(
         .in_north (dataout_v[79:72]),
         .out_east (dataout_h[87:80]),
         .out_south (),
-        .psum (psum[13])
+        .psum (psum[13]),
+        .input_offset(input_offset)
     );
     PE pe15(
         .clk (clk),
@@ -474,7 +494,8 @@ module systolic_array(
         .in_north (dataout_v[87:80]),
         .out_east (dataout_h[95:88]),
         .out_south (),
-        .psum (psum[14])
+        .psum (psum[14]),
+        .input_offset(input_offset)
     );
     PE pe16(
         .clk (clk),
@@ -484,7 +505,8 @@ module systolic_array(
         .in_north (dataout_v[95:88]),
         .out_east (),
         .out_south (),
-        .psum (psum[15])
+        .psum (psum[15]),
+        .input_offset(input_offset)
     );
 
 endmodule
@@ -577,8 +599,8 @@ module controller
     assign state_wire = state;
     assign n_state_wire = n_state;
     assign counter_wire = counter;
-    assign A_index = idx_a;
-    assign B_index = idx_b;
+    assign A_index = (state == READ) ? idx_a : 0;
+    assign B_index = (state == READ) ? idx_b : 0;
     assign C_index = idx_c;
 
 

@@ -1,5 +1,4 @@
 `include "TPU.v"
-// `include "test_tpu.v"
 `include "global_buffer_bram.v" 
 
 module Cfu
@@ -67,15 +66,9 @@ module Cfu
   reg [C_BITS-1:0] C_data_in_init;
 
   assign op = cmd_payload_function_id[9:3]; // 用來判斷是哪一個operation，更新 K、M、N，寫入 buf A、B，開始 TPU 計算，寫到 buf C
-  // assign A_wr_en =  A_wr_en_init;
-  // assign B_wr_en =  B_wr_en_init;
-  // assign A_index =  A_index_init;
-  // assign B_index =  B_index_init;
-  // assign A_data_in =  A_data_in_init;
-  // assign B_data_in =  B_data_in_init;
-  // assign cmd_ready = ~rsp_valid;
 
   reg tpu_busy;
+  reg  [31:0] input_offset;
 
   assign A_wr_en_mux = (in_valid | tpu_busy | busy) ? A_wr_en : A_wr_en_init;
   assign B_wr_en_mux = (in_valid | tpu_busy | busy) ? B_wr_en : B_wr_en_init;
@@ -156,15 +149,12 @@ module Cfu
     .C_wr_en(C_wr_en),
     .C_index(C_index),
     .C_data_in(C_data_in),
-    .C_data_out(C_data_out)
+    .C_data_out(C_data_out),
+    .input_offset(input_offset)
   );
 
-
-
-
-
   reg [3:0] 	state;
-  reg [3:0] 	comp_cnt;
+  reg [31:0] 	comp_cnt;
   always@(negedge clk) begin
     if (reset) begin
       state <= S0;
@@ -340,6 +330,9 @@ module Cfu
             C_wr_en_init <= 1'b0;
             C_index_init <= cmd_payload_inputs_0[ADDR_BITS-1:0];
           end
+          7'd18: begin // Pass Offset
+            input_offset <= cmd_payload_inputs_0;
+          end
         endcase
       end
       S2: begin // Wait one cycle output buffer A
@@ -368,24 +361,28 @@ module Cfu
         cmd_ready <= 1'b0;
         rsp_valid <= 1'b0;
         rsp_payload_outputs_0 <= C_data_out[31:0];
+        // rsp_payload_outputs_0 <= buf_c[C_index_init][31:0];
       end
       S7: begin // Wait one cycle output buffer C
         rst_n <= 1'b1;
         cmd_ready <= 1'b0;
         rsp_valid <= 1'b0;
         rsp_payload_outputs_0 <= C_data_out[63:32];
+        // rsp_payload_outputs_0 <= buf_c[C_index_init][63:32];
       end
       S8: begin // Wait one cycle output buffer C
         rst_n <= 1'b1;
         cmd_ready <= 1'b0;
         rsp_valid <= 1'b0;
         rsp_payload_outputs_0 <= C_data_out[95:64];
+        // rsp_payload_outputs_0 <= buf_c[C_index_init][95:64];
       end
       S9: begin // Wait one cycle output buffer C
         rst_n <= 1'b1;
         cmd_ready <= 1'b0;
         rsp_valid <= 1'b0;
         rsp_payload_outputs_0 <= C_data_out[127:96];
+        // rsp_payload_outputs_0 <= buf_c[C_index_init][127:96];
       end
       S10: begin // TPU Computing ...
         in_valid <= 1'b0; // in_valid 只需一個 cycle 

@@ -66,20 +66,20 @@ inline void ConvPerChannel(
   const int output_width = output_shape.Dims(2);
 
   // 定义 im2col 和 fr2row 数组
-  int8_t im2col[32*32][9*64]; // 根据需要调整大小
-  int8_t fr2row[9*64][500];
+  int8_t im2col[1024][1024]; // 根据需要调整大小
+  int8_t fr2row[1024][1024];
 
   // 初始化 im2col
-  for(int i = 0; i < 32*32; i++)
-    for(int j = 0; j < 9*64; j++)
+  for(int i = 0; i < 1024; i++)
+    for(int j = 0; j < 1024; j++)
       im2col[i][j] = -input_offset;
   
   // memset(im2col, -input_offset, sizeof(im2col));
 
 
   // 初始化 fr2row
-  for(int i = 0; i < 9*64; i++)
-    for(int j = 0; j < 500; j++)
+  for(int i = 0; i < 1024; i++)
+    for(int j = 0; j < 1024; j++)
       fr2row[i][j] = 0;
 
   int row_index = 0;
@@ -125,18 +125,19 @@ inline void ConvPerChannel(
   cfu_op0(1, 0, 0);
   cfu_op0(18, input_offset, 0); // input_offset
 
-  //printf("input_offset: %lx\n", input_offset);
-  //printf("-input_offset: %lx\n", -input_offset);
+  // printf("input_offset: %lx\n", input_offset);
+  // printf("-input_offset: %lx\n", -input_offset);
 
   // 设置维度 K
-  int K = filter_height * filter_width * input_depth;
-  // int N = output_depth;
-  // int M = output_height * output_width;
+  const int K = filter_height * filter_width * input_depth;
+  const int N = output_depth;
+  const int M = output_height * output_width;
+  const int index_bound = M*N;
   cfu_op0(2, K, 0);
   cfu_op0(4,4,0);
   cfu_op0(6,4,0);
 
-  printf("output_depth: %d\n", output_depth);
+  // printf("output_depth: %d\n", output_depth);
   for(int out_channel = 0; out_channel < output_depth; out_channel += 4){
     // 加载缓冲区 B
     for(int kk = 0; kk < K; kk++){
@@ -144,14 +145,15 @@ inline void ConvPerChannel(
       for (int c = 0; c < 4; ++c) {
         b[c] = fr2row[kk][out_channel + c];
       }
+      // printf("b: %x %x %x %x\n", b[0], b[1], b[2], b[3]);
       uint32_t in_b = ((b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3]);
 
       // 写入全局缓冲区 B
       cfu_op0(10, kk, in_b);
 
       // print buffer B
-      //int32_t ret2 = cfu_op0(11, kk, 0);
-      //printf("Set Buffer B set = %lx \t\taddr: %x, \t\tout: %lX\n", in_b , kk, ret2);
+      // int32_t ret2 = cfu_op0(11, kk, 0);
+      // printf("Set Buffer B set = %lx \t\taddr: %x, \t\tout: %lX\n", in_b , kk, ret2);
     }
 
     for(int slide = 0; slide < output_height * output_width; slide += 4){
@@ -161,13 +163,14 @@ inline void ConvPerChannel(
         for (int s = 0; s < 4; ++s){
           a[s] = im2col[slide + s][kk];
         }
+        // printf("a: %x %x %x %x\n", a[0], a[1], a[2], a[3]);
         uint32_t in_a = ((a[0] << 24) | (a[1] << 16) | (a[2] << 8) | a[3]);
 
         // 写入全局缓冲区 A
         cfu_op0(8, kk, in_a);
 
-        //int32_t ret = cfu_op0(9, kk, 0);
-        //printf("Set Buffer A = %lx , \t\taddr: %x, \t\tout: %lX\n", in_a , kk, ret);
+        // int32_t ret = cfu_op0(9, kk, 0);
+        // printf("Set Buffer A = %lx , \t\taddr: %x, \t\tout: %lX\n", in_a , kk, ret);
       }
 
       // 启动 CFU
@@ -216,13 +219,13 @@ inline void ConvPerChannel(
               acc_value = cfu_op0(14, 3, 0);
           }
 
-          //printf("acc_value: %lX\n", acc_value);
+          // printf("acc_value: %lX\n", acc_value);
 
           // 加上偏置
           if (bias_data){
             acc_value += bias_data[out_channel + c];
           }
-          //printf("acc with bias: %lX\n", acc_value);
+          // printf("acc with bias: %lX\n", acc_value);
 
           // 量化和裁剪
           acc_value = MultiplyByQuantizedMultiplier(acc_value, output_multiplier[out_channel + c], output_shift[out_channel + c]);
@@ -230,11 +233,15 @@ inline void ConvPerChannel(
           acc_value = std::max(acc_value, output_activation_min);
           acc_value = std::min(acc_value, output_activation_max);
 
-          printf("acc_value after quantization: %lX\n", acc_value);
+          // printf("acc_value after quantization: %lX\n", acc_value);
 
           // 写回 output_data
           int output_index = Offset(output_shape, 0, (slide + s) / output_width, (slide + s) % output_width, out_channel + c);
-          output_data[output_index] = static_cast<int8_t>(acc_value);
+          if(output_index < index_bound){
+            output_data[output_index] = static_cast<int8_t>(acc_value);
+            // printf("output_index: %d，val = %lx \n", output_index, acc_value);
+          }
+
         }
       }
     }  

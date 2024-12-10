@@ -37,7 +37,7 @@ module Cfu
   //----- declare internal signals -----
   reg rst_n;
   reg in_valid;
-  reg [7:0] K, M, N;
+  reg [31:0] K, M, N;
   wire [6:0] op;
 
   wire busy;
@@ -68,6 +68,7 @@ module Cfu
   assign op = cmd_payload_function_id[9:3]; // 用來判斷是哪一個operation，更新 K、M、N，寫入 buf A、B，開始 TPU 計算，寫到 buf C
 
   reg tpu_busy;
+  reg  [31:0] input_offset;
 
   assign A_wr_en_mux = (in_valid | tpu_busy | busy) ? A_wr_en : A_wr_en_init;
   assign B_wr_en_mux = (in_valid | tpu_busy | busy) ? B_wr_en : B_wr_en_init;
@@ -148,7 +149,8 @@ module Cfu
     .C_wr_en(C_wr_en),
     .C_index(C_index),
     .C_data_in(C_data_in),
-    .C_data_out(C_data_out)
+    .C_data_out(C_data_out),
+    .input_offset(input_offset)
   );
 
   reg [3:0] 	state;
@@ -327,6 +329,9 @@ module Cfu
           7'd17: begin // Read global bufer C
             C_wr_en_init <= 1'b0;
             C_index_init <= cmd_payload_inputs_0[ADDR_BITS-1:0];
+          end
+          7'd18: begin // Pass Offset
+            input_offset <= cmd_payload_inputs_0;
           end
         endcase
       end

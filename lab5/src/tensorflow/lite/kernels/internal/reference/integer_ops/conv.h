@@ -1,17 +1,3 @@
-/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-==============================================================================*/
 #ifndef TENSORFLOW_LITE_KERNELS_INTERNAL_REFERENCE_INTEGER_OPS_CONV_H_
 #define TENSORFLOW_LITE_KERNELS_INTERNAL_REFERENCE_INTEGER_OPS_CONV_H_
 
@@ -19,52 +5,12 @@ limitations under the License.
 
 #include "tensorflow/lite/kernels/internal/common.h"
 #include "tensorflow/lite/kernels/internal/portable_tensor_utils.h"
-#include <cstdio>
 
-/*
-int32_t matrix_fmaps[65536][65536];
-int32_t matrix_filter[65536][65536];
-int32_t matrix_result[65536][65536];
-*/
-int32_t matrix_fmaps[1024][1024];
-int32_t matrix_filter[1024][1024];
-int32_t matrix_result[1024][1024];
+#include "perf.h"
+#include "cfu.h"
 
-void matrix_multiply(int32_t* A, int rowsA, int colsA, int32_t* B, int rowsB, int colsB, int32_t* result) {
-    // Check if matrix dimensions are compatible for multiplication
-    if (colsA != rowsB) {
-        printf("Error: Incompatible matrix dimensions for multiplication\n");
-        return;
-    }
-
-    // Perform matrix multiplication
-    for (int i = 0; i < rowsA; ++i) {
-        for (int j = 0; j < colsB; ++j) {
-            result[i * colsB + j] = 0;
-            for (int k = 0; k < colsA; ++k) {
-                result[i * colsB + j] += A[i * colsA + k] * B[k * colsB + j];
-            }
-        }
-    }
-}
-
-void matrix_multiply2D(int rowsA, int colsA, int rowsB, int colsB) {
-    // Check if matrix dimensions are compatible for multiplication
-    if (colsA != rowsB) {
-        printf("Error: Incompatible matrix dimensions for multiplication\n");
-        return;
-    }
-
-    // Perform matrix multiplication
-    for (int i = 0; i < rowsA; ++i) {
-        for (int j = 0; j < colsB; ++j) {
-            matrix_result[i][j] = 0;
-            for (int k = 0; k < colsA; ++k) {
-                matrix_result[i][j] += matrix_fmaps[i][k] * matrix_filter[k][j];
-            }
-        }
-    }
-}
+#define Min(a, b) ((a) < (b) ? (a) : (b))
+//#include "playground_util/print_params.h"
 
 namespace tflite {
 namespace reference_integer_ops {
@@ -77,8 +23,11 @@ inline void ConvPerChannel(
     const int8_t* filter_data, const RuntimeShape& bias_shape,
     const int32_t* bias_data, const RuntimeShape& output_shape,
     int8_t* output_data) {
-  // Get parameters.
-  const int32_t input_offset = params.input_offset;  // r = s(q - Z)
+  
+   perf_enable_counter(6);
+
+  // 获取参数
+  const int32_t input_offset = params.input_offset;
   const int stride_width = params.stride_width;
   const int stride_height = params.stride_height;
   const int dilation_width_factor = params.dilation_width_factor;
@@ -86,179 +35,221 @@ inline void ConvPerChannel(
   const int pad_width = params.padding_values.width;
   const int pad_height = params.padding_values.height;
   const int32_t output_offset = params.output_offset;
+  
 
-  // Set min and max value of the output.
+
+  // 设置输出的最小值和最大值
   const int32_t output_activation_min = params.quantized_activation_min;
   const int32_t output_activation_max = params.quantized_activation_max;
 
-  // Consistency check.
+  // 一致性检查
   TFLITE_DCHECK_LE(output_activation_min, output_activation_max);
   TFLITE_DCHECK_EQ(input_shape.DimensionsCount(), 4);
   TFLITE_DCHECK_EQ(filter_shape.DimensionsCount(), 4);
   TFLITE_DCHECK_EQ(output_shape.DimensionsCount(), 4);
-  const int batches = MatchingDim(input_shape, 0, output_shape, 0);
   const int input_depth = input_shape.Dims(3);
   const int output_depth = MatchingDim(filter_shape, 0, output_shape, 3);
   if (bias_data) {
     TFLITE_DCHECK_EQ(bias_shape.FlatSize(), output_depth);
   }
 
-  // Check dimensions of the tensors.
+  // 检查张量的维度
   const int input_height = input_shape.Dims(1);
   const int input_width = input_shape.Dims(2);
   const int filter_height = filter_shape.Dims(1);
   const int filter_width = filter_shape.Dims(2);
   const int filter_input_depth = filter_shape.Dims(3);
-  const int groups = input_depth / filter_input_depth;
+  // const int groups = input_depth / filter_input_depth;
   TFLITE_DCHECK_EQ(input_depth % filter_input_depth, 0);
-  const int filters_per_group = output_depth / groups;
+  // const int filters_per_group = output_depth / groups;
   const int output_height = output_shape.Dims(1);
   const int output_width = output_shape.Dims(2);
-/*
-  printf("input_depth: %d\n",input_depth);
-  printf("filter_input_depth: %d\n",filter_input_depth);
-  printf("output_depth: %d\n",output_depth);
-  printf("groups: %d\n",groups);
-  printf("filters_per_group: %d\n",filters_per_group);
-*/
+
+  // 定义 im2col 和 fr2row 数组
+  int8_t im2col[1024][1024]; // 根据需要调整大小
+  int8_t fr2row[1024][1024];
+
+  // 初始化 im2col
+  for(int i = 0; i < 1024; i++)
+    for(int j = 0; j < 1024; j++)
+      im2col[i][j] = -input_offset;
+  
+  // memset(im2col, -input_offset, sizeof(im2col));
 
 
-  // fmaps_num * fmaps_size
-  int fmaps_num = output_height * output_width;
-  int fmaps_size = filter_height * filter_width * input_depth;
+  // 初始化 fr2row
+  for(int i = 0; i < 1024; i++)
+    for(int j = 0; j < 1024; j++)
+      fr2row[i][j] = 0;
 
-  // filter_size * filter_num
-  int filter_size = filter_height * filter_width * filter_input_depth;
-  int filter_num = output_depth;
+  int row_index = 0;
+  int col_index = 0;
 
-  // result_size * result_channel
-  int result_size = fmaps_num;
-  int result_num = filter_num;
-
-  printf("\n\n");
-  printf("fmaps_num: %d\n",fmaps_num);
-  printf("fmaps_size: %d\n",fmaps_size);
-  printf("filter_size: %d\n",filter_size);
-  printf("filter_num: %d\n",filter_num);
-  printf("result_size: %d\n", result_size);
-  printf("result_num: %d\n",result_num);
-  int32_t acc;
-
-  int fmaps_row;
-  int fmaps_col;
-
-  int filter_row;
-  int filter_col;
-
-  int result_row;
-  int result_col;
-
-  for (int batch = 0; batch < batches; ++batch)
-    for (int out_y = 0; out_y < output_height; ++out_y)
-      for (int out_x = 0; out_x < output_width; ++out_x)
-        for (int out_channel = 0; out_channel < output_depth; ++out_channel) {
-          output_data[Offset(output_shape, batch, out_y, out_x, out_channel)] =
-		  static_cast<int8_t> (0);
-	}
-
-
-  for (int batch = 0; batch < batches; ++batch) {
-
-      
-//-------------------------------------------------------------------------------
-    
-//  fmaps prepare : 3D to 2D
-
-    for (int out_y = 0; out_y < output_height; ++out_y) {
-      const int in_y_origin = (out_y * stride_height) - pad_height;
-      for (int out_x = 0; out_x < output_width; ++out_x) {
-        const int in_x_origin = (out_x * stride_width) - pad_width;       
-        for (int out_channel = 0; out_channel < output_depth; ++out_channel) {
-          auto group = out_channel / filters_per_group;
-//----
-          for (int filter_y = 0; filter_y < filter_height; ++filter_y) {
-            const int in_y = in_y_origin + dilation_height_factor * filter_y;
-            for (int filter_x = 0; filter_x < filter_width; ++filter_x) {
-              const int in_x = in_x_origin + dilation_width_factor * filter_x;
-//-----
-              // Zero padding by omitting the areas outside the image.
-              const bool is_point_inside_image = (in_x >= 0) && (in_x < input_width) && (in_y >= 0) && (in_y < input_height);
-
-              // if (!is_point_inside_image) {
-              //   continue;
-              // }
-            
-            int32_t input_val = 0;
-            
-	          for (int in_channel = 0; in_channel < filter_input_depth; ++in_channel) {
-
-                if(is_point_inside_image){
-                  input_val = input_data[Offset(input_shape, batch, in_y, in_x, in_channel + group * filter_input_depth)] + input_offset;
-                }
-                // int32_t input_val = input_data[Offset(input_shape, batch, in_y, in_x, in_channel + group * filter_input_depth)] + input_offset;
-
-                fmaps_row = out_x + out_y * output_width; //fmaps_num // location index
-                fmaps_col = filter_x + filter_y * filter_width  + in_channel * (filter_height * filter_width); //fmaps_size //content * channel
-                //matrix_fmaps[fmaps_row * fmaps_size + fmaps_col] = input_val;
-                matrix_fmaps[fmaps_row][fmaps_col] = input_val;
-              }
+  // 图像转换为列
+  for (int out_y = 0; out_y < output_height; ++out_y) {
+    const int in_y_origin = (out_y * stride_height) - pad_height;
+    for (int out_x = 0; out_x < output_width; ++out_x) {
+      const int in_x_origin = (out_x * stride_width) - pad_width;
+        for (int filter_y = 0; filter_y < filter_height; ++filter_y) {
+          const int in_y = in_y_origin + filter_y*dilation_height_factor;
+          for (int filter_x = 0; filter_x < filter_width; ++filter_x) {
+            const int in_x = in_x_origin + filter_x*dilation_width_factor;
+            const bool is_point_inside_image = (in_x >= 0) && (in_x < input_width) && (in_y >= 0) && (in_y < input_height);
+            for (int in_channel = 0; in_channel < filter_input_depth; ++in_channel) {
+              row_index = out_y * output_width + out_x;
+              col_index = filter_height * filter_width * in_channel + filter_y * filter_width + filter_x;
+              if(is_point_inside_image)
+                im2col[row_index][col_index] = *((int8_t *)(input_data + Offset(input_shape, 0, in_y, in_x, in_channel)));
+              else
+                im2col[row_index][col_index] = -input_offset;
             }
           }
-	}
-      }
-    }
-
-
-//----------------------------------------------------------------------------------------------------
-//  filter prepare : 4D to 2D
-
-for (int out_channel = 0; out_channel < output_depth; ++out_channel) {
-  for (int filter_y = 0; filter_y < filter_height; ++filter_y) {
-    for (int filter_x = 0; filter_x < filter_width; ++filter_x) {
-      for (int in_channel = 0; in_channel < filter_input_depth; ++in_channel) {
-        int32_t filter_val = filter_data[Offset(filter_shape, out_channel, filter_y, filter_x, in_channel)];
-
-        filter_row = filter_x + filter_y * filter_width + in_channel * (filter_height * filter_width); // filter_size
-        filter_col = out_channel; // filter_num
-
-        //matrix_filter[filter_row * filter_num + filter_col] = filter_val;
-        matrix_filter[filter_row][filter_col] = filter_val;
       }
     }
   }
-}
 
-//----------------------------------------------------------------------------------------------------
-
-//  matrix_multiply(matrix_fmaps, fmaps_num, fmaps_size, matrix_filter, filter_size, filter_num, matrix_result);
-  matrix_multiply2D( fmaps_num, fmaps_size,  filter_size, filter_num);
-
-//----------------------------------------------------------------------------------------------------
-
-
+  // 滤波器转换为行
   for (int out_channel = 0; out_channel < output_depth; ++out_channel) {
-    for (int out_y = 0; out_y < output_height; ++out_y) {
-      for (int out_x = 0; out_x < output_width; ++out_x) {
-          result_row = out_x + out_y * output_width; // result_size
-	        result_col = out_channel; // result_num
-
-          //	  acc = matrix_result[result_row * result_num + result_col];
-          acc = matrix_result[result_row][result_col];
-
-	        if (bias_data) {
-            acc += bias_data[out_channel];
-          }
-          acc = MultiplyByQuantizedMultiplier(
-              acc, output_multiplier[out_channel], output_shift[out_channel]);
-          acc += output_offset;
-          acc = std::max(acc, output_activation_min);
-          acc = std::min(acc, output_activation_max);
-          output_data[Offset(output_shape, batch, out_y, out_x, out_channel)] = static_cast<int8_t>(acc);
+    for (int filter_y = 0; filter_y < filter_height; ++filter_y) {
+      for (int filter_x = 0; filter_x < filter_width; ++filter_x) {
+        for (int in_channel = 0; in_channel < filter_input_depth; ++in_channel) {
+          row_index = filter_height * filter_width * in_channel + filter_y * filter_width + filter_x;
+          col_index = out_channel;
+          fr2row[row_index][col_index] = *((int8_t *)(filter_data + Offset(filter_shape, out_channel, filter_y, filter_x, in_channel)));
         }
       }
     }
-  } // batch
-}  // ConvPerChannel
+  }
+
+  // 重置 CFU
+  cfu_op0(1, 0, 0);
+  cfu_op0(18, input_offset, 0); // input_offset
+
+  // printf("input_offset: %lx\n", input_offset);
+  // printf("-input_offset: %lx\n", -input_offset);
+
+  // 设置维度 K
+  const int K = filter_height * filter_width * input_depth;
+  const int N = output_depth;
+  const int M = output_height * output_width;
+  const int index_bound = M*N;
+  cfu_op0(2, K, 0);
+  cfu_op0(4,4,0);
+  cfu_op0(6,4,0);
+
+  // printf("output_depth: %d\n", output_depth);
+  for(int out_channel = 0; out_channel < output_depth; out_channel += 4){
+    // 加载缓冲区 B
+    for(int kk = 0; kk < K; kk++){
+      uint8_t b[4] = {0, 0, 0, 0};
+      for (int c = 0; c < 4; ++c) {
+        b[c] = fr2row[kk][out_channel + c];
+      }
+      // printf("b: %x %x %x %x\n", b[0], b[1], b[2], b[3]);
+      uint32_t in_b = ((b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3]);
+
+      // 写入全局缓冲区 B
+      cfu_op0(10, kk, in_b);
+
+      // print buffer B
+      // int32_t ret2 = cfu_op0(11, kk, 0);
+      // printf("Set Buffer B set = %lx \t\taddr: %x, \t\tout: %lX\n", in_b , kk, ret2);
+    }
+
+    for(int slide = 0; slide < output_height * output_width; slide += 4){
+      // 加载缓冲区 A
+      for(int kk = 0; kk < K; kk++){
+        uint8_t a[4] = {0, 0, 0, 0};
+        for (int s = 0; s < 4; ++s){
+          a[s] = im2col[slide + s][kk];
+        }
+        // printf("a: %x %x %x %x\n", a[0], a[1], a[2], a[3]);
+        uint32_t in_a = ((a[0] << 24) | (a[1] << 16) | (a[2] << 8) | a[3]);
+
+        // 写入全局缓冲区 A
+        cfu_op0(8, kk, in_a);
+
+        // int32_t ret = cfu_op0(9, kk, 0);
+        // printf("Set Buffer A = %lx , \t\taddr: %x, \t\tout: %lX\n", in_a , kk, ret);
+      }
+
+      // 启动 CFU
+      cfu_op0(12, 0, 0);
+
+      // 读取累加器并处理
+      for (int s = 0; s < 4; ++s){
+        for (int c = 0; c < 4; ++c){
+          int32_t acc_value = 0;
+          // 根据 c 和 s 选择正确的操作码
+          if (c == 0) {
+            if (s == 0)
+              acc_value = cfu_op0(17, 0, 0);
+            else if (s == 1)
+              acc_value = cfu_op0(17, 1, 0);
+            else if (s == 2)
+              acc_value = cfu_op0(17, 2, 0);
+            else if (s == 3)
+              acc_value = cfu_op0(17, 3, 0);
+          } else if (c == 1) {
+            if (s == 0)
+              acc_value = cfu_op0(16, 0, 0);
+            else if (s == 1)
+              acc_value = cfu_op0(16, 1, 0);
+            else if (s == 2)
+              acc_value = cfu_op0(16, 2, 0);
+            else if (s == 3)
+              acc_value = cfu_op0(16, 3, 0);
+          } else if (c == 2) {
+            if (s == 0)
+              acc_value = cfu_op0(15, 0, 0);
+            else if (s == 1)
+              acc_value = cfu_op0(15, 1, 0);
+            else if (s == 2)
+              acc_value = cfu_op0(15, 2, 0);
+            else if (s == 3)
+              acc_value = cfu_op0(15, 3, 0);
+          } else if (c == 3) {
+            if (s == 0)
+              acc_value = cfu_op0(14, 0, 0);
+            else if (s == 1)
+              acc_value = cfu_op0(14, 1, 0);
+            else if (s == 2)
+              acc_value = cfu_op0(14, 2, 0);
+            else if (s == 3)
+              acc_value = cfu_op0(14, 3, 0);
+          }
+
+          // printf("acc_value: %lX\n", acc_value);
+
+          // 加上偏置
+          if (bias_data){
+            acc_value += bias_data[out_channel + c];
+          }
+          // printf("acc with bias: %lX\n", acc_value);
+
+          // 量化和裁剪
+          acc_value = MultiplyByQuantizedMultiplier(acc_value, output_multiplier[out_channel + c], output_shift[out_channel + c]);
+          acc_value += output_offset;
+          acc_value = std::max(acc_value, output_activation_min);
+          acc_value = std::min(acc_value, output_activation_max);
+
+          // printf("acc_value after quantization: %lX\n", acc_value);
+
+          // 写回 output_data
+          int output_index = Offset(output_shape, 0, (slide + s) / output_width, (slide + s) % output_width, out_channel + c);
+          if(output_index < index_bound){
+            output_data[output_index] = static_cast<int8_t>(acc_value);
+            // printf("output_index: %d，val = %lx \n", output_index, acc_value);
+          }
+
+        }
+      }
+    }  
+  }
+  perf_disable_counter(6);
+}
+
+
 
 inline void ConvPerChannelWithPackedInt4Weights(
     const ConvParams& params, const int32_t* output_multiplier,
@@ -373,6 +364,7 @@ inline void ConvPerChannel(
     }
   }
 }
+
 
 }  // namespace reference_integer_ops
 }  // namespace tflite
